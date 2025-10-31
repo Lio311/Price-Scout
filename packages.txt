@@ -1,7 +1,8 @@
+# חבילות לינוקס הנדרשות להרצת Chromium/Chrome בסביבה ללא ממשק גרפי (Headless)
+chromium
 libnss3
 libgconf-2-4
-libfontconfig
+libfontconfig1
 libxss1
-Headless Chrome
-libatk-bridge2.0-0 
-libgbm1
+libatk-bridge2.0-0
+libgbm-dev
