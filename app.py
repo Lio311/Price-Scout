@@ -13,29 +13,31 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 
 # --- 1. נתוני קונפיגורציה ממוקדים ---
 PRODUCT_NAME = "Amouage Interlude Man 100ml"
-MY_PRICE = 1200 # המחיר שלך (נניח)
+MY_PRICE = 1200 
 
 COMPETITORS = {
     "KSP": "https://ksp.co.il/",
     "Kol_B_Yehuda": "https://kolboyehuda.co.il/",
 }
-PRICE_GAP_THRESHOLD = 0.20 # 20%
+PRICE_GAP_THRESHOLD = 0.20 
 
-# --- 2. ניהול ה-WebDriver (ללא שינוי, קריטי לסביבת ענן) ---
+# --- 2. ניהול ה-WebDriver (קריטי לסביבת ענן) ---
 
 @st.cache_resource
 def get_chrome_driver():
     """מגדיר ומחזיר את מנהל הדפדפן של סלניום."""
+    # הנתיב הסטנדרטי ל-Chromium ב-Streamlit Cloud
     CHROMIUM_PATH = "/usr/bin/chromium" 
     
     chrome_options = Options()
     
+    # הגדרות Headless
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     
-    # ציון הנתיב ל-Chromium שהותקן
+    # *** ציון הנתיב ל-Chromium שהותקן ***
     chrome_options.binary_location = CHROMIUM_PATH 
     
     # הסוואה:
@@ -59,24 +61,30 @@ try:
 except Exception:
     DRIVER = None
     
-# --- 3. פונקציות Scraping ממוקדות ---
+# --- 3. פונקציות Scraping ממוקדות עם Debugging ---
 
 def search_and_scrape_ksp(query):
-    """מבצע חיפוש ב-KSP באמצעות Selenium."""
+    """מבצע חיפוש ב-KSP, מדפיס HTML לניפוי באגים."""
     if not DRIVER: return None
 
     search_query = query.replace(' ', '+')
-    search_url = f"{COMPETITORS['KSP']}web/search/index.aspx?search={search_query}"
+    search_url = f"https://ksp.co.il/web/search/index.aspx?search={search_query}"
     
     try:
         DRIVER.get(search_url)
+        
+        # המתנה לטעינת התוכן הרלוונטי
         WebDriverWait(DRIVER, 10).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "ProductCardPrice"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".ProductCardPrice, .ProductCardPrice--not-found, .SearchResults-list"))
         )
+        
+        # הדפסת HTML ללוגים ולממשק Streamlit
+        st.subheader("🛠️ KSP DEBUG HTML")
+        st.code(DRIVER.page_source[:8000], language='html') 
         
         soup = BeautifulSoup(DRIVER.page_source, 'html.parser')
         
-        # סלקטור משוער עבור KSP
+        # ⚠️ הסלקטור המשוער (שצריך לתקן):
         price_tag = soup.select_one('div.ProductCardPrice span.price-label-text') 
         
         if price_tag:
@@ -84,6 +92,7 @@ def search_and_scrape_ksp(query):
             clean_price = re.sub(r'[^\d]', '', price_text) 
             return int(clean_price) if clean_price else None
         
+        st.warning(f"KSP: המחיר לא נמצא עם הסלקטור הנוכחי: 'div.ProductCardPrice span.price-label-text'.")
         return None 
         
     except TimeoutException:
@@ -95,27 +104,33 @@ def search_and_scrape_ksp(query):
 
 
 def search_and_scrape_kolboyehuda(query):
-    """מבצע חיפוש ב-Kol_B_Yehuda באמצעות Selenium."""
+    """מבצע חיפוש ב-Kol_B_Yehuda, מדפיס HTML לניפוי באגים."""
     if not DRIVER: return None
     
     search_url = f"https://kolboyehuda.co.il/?s={query.replace(' ', '+')}"
     
     try:
         DRIVER.get(search_url)
+        # המתנה לטעינת דף התוצאות
         WebDriverWait(DRIVER, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".product-item"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".product-item, .no-products-found"))
         )
         
+        # הדפסת HTML ללוגים ולממשק Streamlit
+        st.subheader("🛠️ Kol B'Yehuda DEBUG HTML")
+        st.code(DRIVER.page_source[:8000], language='html') 
+
         soup = BeautifulSoup(DRIVER.page_source, 'html.parser')
         
-        # סלקטור משוער עבור Kol B'Yehuda
+        # ⚠️ הסלקטור המשוער (שצריך לתקן):
         price_tag = soup.select_one('.product-item .price-wrapper span.amount')
 
         if price_tag:
             price_text = price_tag.text.strip()
-            clean_price = re.sub(r'[^\d]', '', price_price)
+            clean_price = re.sub(r'[^\d]', '', price_text)
             return int(clean_price) if clean_price else None
             
+        st.warning(f"Kol B'Yehuda: המחיר לא נמצא עם הסלקטור הנוכחי: '.product-item .price-wrapper span.amount'.")
         return None
         
     except TimeoutException:
@@ -131,7 +146,7 @@ SCRAPING_FUNCTIONS = {
     "Kol_B_Yehuda": search_and_scrape_kolboyehuda
 }
 
-# --- 4. לוגיקת השוואה (ממוקדת במוצר אחד) ---
+# --- 4. לוגיקת השוואה והממשק (נותר ללא שינוי מהותי) ---
 
 @st.cache_data(ttl=3600) 
 def run_price_analysis(product_name, my_price, threshold):
@@ -213,7 +228,6 @@ if st.button("🔄 הפעל ניתוח מחירים"):
         st.session_state['df_results'] = df_results
         st.session_state['current_threshold'] = current_threshold
 
-# הצגת התוצאות
 if 'df_results' in st.session_state:
     df_results = st.session_state['df_results']
     current_threshold = st.session_state['current_threshold']
@@ -244,4 +258,4 @@ if 'df_results' in st.session_state:
         st.success("המחיר בטווח התחרותי! אין התראות חדשות.")
 
 st.markdown("---")
-st.caption("שים לב: Scraping מתקדם כרוך בסיכון חסימה. יש לוודא ש-packages.txt תקין.")
+st.caption("כלי זה מציג כעת את קוד ה-HTML שנשלף לצורך ניפוי באגים. יש להסיר את פקודות ה-st.code לאחר התיקון!")
