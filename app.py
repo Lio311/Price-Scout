@@ -8,7 +8,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, WebDriverException
 
-# --- ייבוא הכלי החדש ---
+# ייבוא הכלי לעקיפת חסימות
 import undetected_chromedriver as uc
 
 # --- 1. נתוני קונפיגורציה ממוקדים ---
@@ -21,35 +21,95 @@ COMPETITORS = {
 }
 PRICE_GAP_THRESHOLD = 0.20 
 
-# --- 2. ניהול ה-WebDriver (משודרג ל-Undetected) ---
+# --- 2. ניהול ה-WebDriver (משודרג ל-Undetected + Proxy) ---
 
 @st.cache_resource
 def get_chrome_driver():
-    """מגדיר ומחזיר את מנהל הדפדפן של סלניום (גרסה בלתי ניתנת לזיהוי)."""
-    CHROMIUM_PATH = "/usr/bin/chromium" 
+    """מגדיר דרייבר שמשתמש ב-Proxy כדי לעקוף חסימת IP."""
     
+    # --- הגדרות פרוקסי (נטען מה-Secrets) ---
+    try:
+        PROXY_HOST = st.secrets["PROXY_HOST"]
+        PROXY_PORT = st.secrets["PROXY_PORT"]
+        PROXY_USER = st.secrets["PROXY_USER"]
+        PROXY_PASS = st.secrets["PROXY_PASS"]
+
+        # יצירת מניפסט לפרוקסי (עבור undetected-chromedriver)
+        manifest_json = """
+        {
+            "version": "1.0.0",
+            "manifest_version": 2,
+            "name": "Chrome Proxy",
+            "permissions": [
+                "proxy",
+                "tabs",
+                "unlimitedStorage",
+                "storage",
+                "<all_urls>",
+                "webRequest",
+                "webRequestBlocking"
+            ],
+            "background": {
+                "scripts": ["background.js"]
+            }
+        }
+        """
+
+        background_js = """
+        var config = {
+                mode: "fixed_servers",
+                rules: {
+                singleProxy: {
+                    scheme: "http",
+                    host: "%s",
+                    port: parseInt(%s)
+                },
+                bypassList: ["localhost"]
+                }
+            };
+
+        chrome.proxy.settings.set({value: config, scope: "regular"}, function() {});
+
+        function callbackFn(details) {
+            return {
+                authCredentials: {
+                    username: "%s",
+                    password: "%s"
+                }
+            };
+        }
+
+        chrome.webRequest.onAuthRequired.addListener(
+                    callbackFn,
+                    {urls: ["<all_urls>"]},
+                    ['blocking']
+        );
+        """ % (PROXY_HOST, PROXY_PORT, PROXY_USER, PROXY_PASS)
+
+    except Exception as e:
+        st.error(f"שגיאה בטעינת ה-Secrets לפרוקסי: {e}. ודא שיצרת קובץ .streamlit/secrets.toml תקין.")
+        st.stop()
+
+
+    CHROMIUM_PATH = "/usr/bin/chromium" 
     options = uc.ChromeOptions()
     
-    # הגדרות Headless (עדיין נחוצות לענן)
+    # הוספת הפרוקסי כ-extension
+    options.add_extension_data(manifest_json, background_js)
+    
+    # הגדרות Headless
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    
-    # ציון הנתיב ל-Chromium שהותקן
     options.binary_location = CHROMIUM_PATH 
     
-    # הסוואה (הספרייה עושה את רוב העבודה לבד)
-    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    options.add_argument(f'user-agent={user_agent}')
-
     try:
-        # --- שימוש ב-uc.Chrome במקום ב-webdriver.Chrome ---
         driver = uc.Chrome(options=options, use_subprocess=True) 
-        driver.set_page_load_timeout(30)
+        driver.set_page_load_timeout(60) # הגדלת זמן ההמתנה בגלל הפרוקסי
         return driver
     except Exception as e:
-        st.error(f"❌ שגיאה בהפעלת Undetected Chrome Driver: {e}.")
+        st.error(f"❌ שגיאה בהפעלת דרייבר עם פרוקסי: {e}.")
         st.stop()
     return None
 
@@ -61,7 +121,7 @@ except Exception:
 # --- 3. פונקציות Scraping (עם סלקטורים מתוקנים) ---
 
 def search_and_scrape_ksp(query):
-    """מבצע חיפוש ב-KSP באמצעות Undetected-Chromedriver."""
+    """מבצע חיפוש ב-KSP."""
     if not DRIVER: return None
 
     search_query = query.replace(' ', '+')
@@ -70,18 +130,15 @@ def search_and_scrape_ksp(query):
     try:
         DRIVER.get(search_url)
         
-        # אם קיבלנו 403, הכותרת תהיה "KSP Forbidden 403"
         if "403" in DRIVER.title:
-             st.warning(f"❌ KSP עדיין חוסם אותנו (403).")
+             st.warning(f"❌ KSP עדיין חוסם אותנו (403), גם עם פרוקסי.")
              return None
 
-        WebDriverWait(DRIVER, 10).until(
+        WebDriverWait(DRIVER, 15).until( # זמן המתנה ארוך יותר
             EC.presence_of_element_located((By.CSS_SELECTOR, ".ProductCardPrice, .SearchResults-list"))
         )
         
         soup = BeautifulSoup(DRIVER.page_source, 'html.parser')
-        
-        # ⚠️ סלקטור משוער (נשאר זהה בינתיים, הבעיה הייתה החסימה)
         price_tag = soup.select_one('div.ProductCardPrice span.price-label-text') 
         
         if price_tag:
@@ -93,7 +150,7 @@ def search_and_scrape_ksp(query):
         return None 
         
     except TimeoutException:
-        st.warning(f"⏳ KSP: פסק זמן (Timeout).")
+        st.warning(f"⏳ KSP: פסק זמן (Timeout). ייתכן שהפרוקסי איטי או נחסם.")
         return None
     except Exception as e:
         st.warning(f"❌ שגיאת Scraping ב-KSP עבור {query}: {e}")
@@ -101,27 +158,23 @@ def search_and_scrape_ksp(query):
 
 
 def search_and_scrape_kolboyehuda(query):
-    """מבצע חיפוש ב-Kol_B_Yehuda (עם סלקטור מתוקן)."""
+    """מבצע חיפוש ב-Kol_B_Yehuda."""
     if not DRIVER: return None
     
     search_url = f"https://kolboyehuda.co.il/?s={query.replace(' ', '+')}"
     
     try:
         DRIVER.get(search_url)
-        WebDriverWait(DRIVER, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".products, .no-products-found")) # המתנה לרשימת המוצרים
+        WebDriverWait(DRIVER, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".products, .no-products-found"))
         )
         
         soup = BeautifulSoup(DRIVER.page_source, 'html.parser')
-        
-        # ⚠️ --- תיקון סלקטור (ניחוש מושכל) ---
-        # אתרי WooCommerce משתמשים בדרך כלל ב-CSS class הזה:
         price_tag = soup.select_one('.product-item .woocommerce-Price-amount.amount bdi')
 
         if price_tag:
             price_text = price_tag.text.strip()
             clean_price = re.sub(r'[^\d]', '', price_text)
-            # המחיר עשוי להיות עם .00, אז ננקה גם את זה
             clean_price = clean_price.split('00')[0] 
             return int(clean_price) if clean_price else None
             
@@ -129,12 +182,11 @@ def search_and_scrape_kolboyehuda(query):
         return None
         
     except TimeoutException:
-        st.warning(f"⏳ Kol B'Yehuda: פסק זמן (Timeout).")
+        st.warning(f"⏳ Kol B'Yehuda: פסק זמן (Timeout). ייתכן שהפרוקסי איטי.")
         return None
     except Exception as e:
         st.warning(f"❌ שגיאת Scraping ב-Kol B'Yehuda עבור {query}: {e}")
         return None
-
 
 SCRAPING_FUNCTIONS = {
     "KSP": search_and_scrape_ksp,
@@ -196,7 +248,7 @@ with st.sidebar:
 if st.button("🔄 הפעל ניתוח מחירים"):
     st.cache_data.clear() 
     
-    with st.spinner('מבצע Web Scraping ואוסף נתונים (גרסה משודרגת)...'):
+    with st.spinner('מבצע Web Scraping דרך פרוקסי... (זה עלול לקחת זמן רב)'):
         df_results = run_price_analysis(PRODUCT_NAME, current_price, current_threshold)
         st.success("ניתוח הושלם בהצלחה!")
         st.session_state['df_results'] = df_results
@@ -225,4 +277,4 @@ if 'df_results' in st.session_state:
         st.success("המחיר בטווח התחרותי! אין התראות חדשות.")
 
 st.markdown("---")
-st.caption("משתמש כעת ב-Undetected Chromedriver כדי לנסות לעקוף חסימות.")
+st.caption("משתמש כעת ב-Undetected Chromedriver עם פרוקסי.")
