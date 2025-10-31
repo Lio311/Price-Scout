@@ -26,21 +26,14 @@ PRICE_GAP_THRESHOLD = 0.20
 @st.cache_resource
 def get_chrome_driver():
     """מגדיר ומחזיר את מנהל הדפדפן של סלניום."""
-    # הנתיב הסטנדרטי ל-Chromium ב-Streamlit Cloud
     CHROMIUM_PATH = "/usr/bin/chromium" 
     
     chrome_options = Options()
-    
-    # הגדרות Headless
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    
-    # *** ציון הנתיב ל-Chromium שהותקן ***
     chrome_options.binary_location = CHROMIUM_PATH 
-    
-    # הסוואה:
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -53,7 +46,6 @@ def get_chrome_driver():
     except Exception as e:
         st.error(f"❌ שגיאה בהפעלת Chrome Driver: {e}. ודא ש-packages.txt תקין.")
         st.stop()
-        
     return None
 
 try:
@@ -73,18 +65,20 @@ def search_and_scrape_ksp(query):
     try:
         DRIVER.get(search_url)
         
-        # המתנה לטעינת התוכן הרלוונטי
-        WebDriverWait(DRIVER, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".ProductCardPrice, .ProductCardPrice--not-found, .SearchResults-list"))
-        )
-        
-        # הדפסת HTML ללוגים ולממשק Streamlit
+        # *** תיקון: הדפסת ה-HTML מיד אחרי הטעינה ***
+        # זה מבטיח שנראה מה הדפדפן קיבל, גם אם זו שגיאה.
+        time.sleep(2) # המתנה קצרה לטעינת JS בסיסי
         st.subheader("🛠️ KSP DEBUG HTML")
         st.code(DRIVER.page_source[:8000], language='html') 
+        # *********************************************
+        
+        # ננסה להמתין לאלמנט, אבל גם אם נכשל, כבר הדפסנו את ה-HTML
+        WebDriverWait(DRIVER, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".ProductCardPrice, .SearchResults-list"))
+        )
         
         soup = BeautifulSoup(DRIVER.page_source, 'html.parser')
         
-        # ⚠️ הסלקטור המשוער (שצריך לתקן):
         price_tag = soup.select_one('div.ProductCardPrice span.price-label-text') 
         
         if price_tag:
@@ -92,11 +86,11 @@ def search_and_scrape_ksp(query):
             clean_price = re.sub(r'[^\d]', '', price_text) 
             return int(clean_price) if clean_price else None
         
-        st.warning(f"KSP: המחיר לא נמצא עם הסלקטור הנוכחי: 'div.ProductCardPrice span.price-label-text'.")
+        st.warning(f"KSP: המחיר לא נמצא עם הסלקטור הנוכחי.")
         return None 
         
     except TimeoutException:
-        st.warning(f"⏳ KSP: פסק זמן עבור {query}.")
+        st.warning(f"⏳ KSP: פסק זמן (Timeout) בהמתנה לסלקטור. בדוק את ה-HTML שהודפס.")
         return None
     except Exception as e:
         st.warning(f"❌ שגיאת Scraping ב-KSP עבור {query}: {e}")
@@ -111,18 +105,19 @@ def search_and_scrape_kolboyehuda(query):
     
     try:
         DRIVER.get(search_url)
-        # המתנה לטעינת דף התוצאות
+
+        # *** תיקון: הדפסת ה-HTML מיד אחרי הטעינה ***
+        time.sleep(2) # המתנה קצרה לטעינת JS בסיסי
+        st.subheader("🛠️ Kol B'Yehuda DEBUG HTML")
+        st.code(DRIVER.page_source[:8000], language='html') 
+        # *********************************************
+
         WebDriverWait(DRIVER, 10).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".product-item, .no-products-found"))
         )
         
-        # הדפסת HTML ללוגים ולממשק Streamlit
-        st.subheader("🛠️ Kol B'Yehuda DEBUG HTML")
-        st.code(DRIVER.page_source[:8000], language='html') 
-
         soup = BeautifulSoup(DRIVER.page_source, 'html.parser')
         
-        # ⚠️ הסלקטור המשוער (שצריך לתקן):
         price_tag = soup.select_one('.product-item .price-wrapper span.amount')
 
         if price_tag:
@@ -130,11 +125,11 @@ def search_and_scrape_kolboyehuda(query):
             clean_price = re.sub(r'[^\d]', '', price_text)
             return int(clean_price) if clean_price else None
             
-        st.warning(f"Kol B'Yehuda: המחיר לא נמצא עם הסלקטור הנוכחי: '.product-item .price-wrapper span.amount'.")
+        st.warning(f"Kol B'Yehuda: המחיר לא נמצא עם הסלקטור הנוכחי.")
         return None
         
     except TimeoutException:
-        st.warning(f"⏳ Kol B'Yehuda: פסק זמן עבור {query}.")
+        st.warning(f"⏳ Kol B'Yehuda: פסק זמן (Timeout) בהמתנה לסלקטור. בדוק את ה-HTML שהודפס.")
         return None
     except Exception as e:
         st.warning(f"❌ שגיאת Scraping ב-Kol B'Yehuda עבור {query}: {e}")
@@ -146,7 +141,7 @@ SCRAPING_FUNCTIONS = {
     "Kol_B_Yehuda": search_and_scrape_kolboyehuda
 }
 
-# --- 4. לוגיקת השוואה והממשק (נותר ללא שינוי מהותי) ---
+# --- 4. לוגיקת השוואה (ללא שינוי) ---
 
 @st.cache_data(ttl=3600) 
 def run_price_analysis(product_name, my_price, threshold):
@@ -167,26 +162,20 @@ def run_price_analysis(product_name, my_price, threshold):
             row[f"פער {comp_name} (%)"] = round(price_gap * 100, 2)
             
             if abs(price_gap) >= threshold:
-                if price_gap > 0:
-                    row["התראה"] = f"יקר ב-{round(price_gap * 100)}% מ-{comp_name}"
-                    is_alert = True
-                else:
-                    row["התראה"] = f"זול ב-{round(abs(price_gap) * 100)}% מ-{comp_name}"
-                    is_alert = True
-            
+                if price_gap > 0: row["התראה"] = f"יקר ב-{round(price_gap * 100)}% מ-{comp_name}"
+                else: row["התראה"] = f"זול ב-{round(abs(price_gap) * 100)}% מ-{comp_name}"
+                is_alert = True
         else:
             row[f"פער {comp_name} (%)"] = "אין נתון"
-            
-        time.sleep(2) 
-
-    if not is_alert:
-        row["התראה"] = "בטווח"
         
+        time.sleep(1) # אפשר להאיץ קצת
+
+    if not is_alert: row["התראה"] = "בטווח"
     results.append(row)
     status_message.text("✅ סיום הניתוח.")
     return pd.DataFrame(results)
 
-# --- 5. ממשק Streamlit ---
+# --- 5. ממשק Streamlit (ללא שינוי) ---
 
 st.set_page_config(page_title="💸 PriceScout: Amouage Interlude", layout="wide")
 
@@ -195,36 +184,22 @@ st.markdown("כלי זה מנטר את המחיר שלך מול מתחרים ו�
 
 with st.sidebar:
     st.header("הגדרות ניתוח")
-    
     my_price_input = st.number_input(
-        f"המחיר שלך ל-{PRODUCT_NAME}:",
-        min_value=100,
-        value=MY_PRICE,
-        step=50
+        f"המחיר שלך ל-{PRODUCT_NAME}:", min_value=100, value=MY_PRICE, step=50
     )
-    
     alert_threshold_percent = st.slider(
-        "סף התראה (%)",
-        min_value=5, max_value=50, value=int(PRICE_GAP_THRESHOLD * 100), step=1
+        "סף התראה (%)", min_value=5, max_value=50, value=int(PRICE_GAP_THRESHOLD * 100), step=1
     )
-    
     current_threshold = alert_threshold_percent / 100.0
     current_price = my_price_input
-
     st.info(f"מנטר כעת את {PRODUCT_NAME} מול {len(COMPETITORS)} מתחרים.")
 
 if st.button("🔄 הפעל ניתוח מחירים"):
     st.cache_data.clear() 
     
     with st.spinner('מבצע Web Scraping ואוסף נתונים...'):
-        df_results = run_price_analysis(
-            PRODUCT_NAME, 
-            current_price, 
-            current_threshold
-        )
-        
+        df_results = run_price_analysis(PRODUCT_NAME, current_price, current_threshold)
         st.success("ניתוח הושלם בהצלחה!")
-        
         st.session_state['df_results'] = df_results
         st.session_state['current_threshold'] = current_threshold
 
@@ -241,21 +216,14 @@ if 'df_results' in st.session_state:
     
     if not df_alerts.empty:
         st.warning(f"נמצאה התראה שחצתה את סף ה-{int(current_threshold*100)}%:")
-        
         def highlight_alerts(row):
             style = [''] * len(row)
-            if row['התראה'].startswith('יקר'):
-                style = ['background-color: #ffcccc'] * len(row) 
-            elif row['התראה'].startswith('זול'):
-                style = ['background-color: #ccffcc'] * len(row)
+            if row['התראה'].startswith('יקר'): style = ['background-color: #ffcccc'] * len(row) 
+            elif row['התראה'].startswith('זול'): style = ['background-color: #ccffcc'] * len(row)
             return style
-
-        st.dataframe(
-            df_alerts.style.apply(highlight_alerts, axis=1),
-            use_container_width=True
-        )
+        st.dataframe(df_alerts.style.apply(highlight_alerts, axis=1), use_container_width=True)
     else:
         st.success("המחיר בטווח התחרותי! אין התראות חדשות.")
 
 st.markdown("---")
-st.caption("כלי זה מציג כעת את קוד ה-HTML שנשלף לצורך ניפוי באגים. יש להסיר את פקודות ה-st.code לאחר התיקון!")
+st.caption("כלי זה מציג כעת את קוד ה-HTML שנשלף לצורך ניפוי באגים.")
