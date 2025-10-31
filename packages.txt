@@ -1,0 +1,7 @@
+libnss3
+libgconf-2-4
+libfontconfig
+libxss1
+Headless Chrome
+libatk-bridge2.0-0 
+libgbm1
