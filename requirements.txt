@@ -1,8 +1,7 @@
-streamlit
-pandas
-requests
-beautifulsoup4
-selenium
-webdriver-manager
-undetected-chromedriver
-setuptools
+chromium
+libnss3
+libgconf-2-4
+libfontconfig1
+libxss1
+libatk-bridge2.0-0
+libgbm-dev
