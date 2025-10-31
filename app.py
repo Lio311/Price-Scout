@@ -3,13 +3,13 @@ import pandas as pd
 import re
 import time
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, WebDriverException
+
+# --- ייבוא הכלי החדש ---
+import undetected_chromedriver as uc
 
 # --- 1. נתוני קונפיגורציה ממוקדים ---
 PRODUCT_NAME = "Amouage Interlude Man 100ml"
@@ -21,30 +21,35 @@ COMPETITORS = {
 }
 PRICE_GAP_THRESHOLD = 0.20 
 
-# --- 2. ניהול ה-WebDriver (קריטי לסביבת ענן) ---
+# --- 2. ניהול ה-WebDriver (משודרג ל-Undetected) ---
 
 @st.cache_resource
 def get_chrome_driver():
-    """מגדיר ומחזיר את מנהל הדפדפן של סלניום."""
+    """מגדיר ומחזיר את מנהל הדפדפן של סלניום (גרסה בלתי ניתנת לזיהוי)."""
     CHROMIUM_PATH = "/usr/bin/chromium" 
     
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.binary_location = CHROMIUM_PATH 
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
+    options = uc.ChromeOptions()
+    
+    # הגדרות Headless (עדיין נחוצות לענן)
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    
+    # ציון הנתיב ל-Chromium שהותקן
+    options.binary_location = CHROMIUM_PATH 
+    
+    # הסוואה (הספרייה עושה את רוב העבודה לבד)
     user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    chrome_options.add_argument(f'user-agent={user_agent}')
+    options.add_argument(f'user-agent={user_agent}')
 
     try:
-        driver = webdriver.Chrome(options=chrome_options)
+        # --- שימוש ב-uc.Chrome במקום ב-webdriver.Chrome ---
+        driver = uc.Chrome(options=options, use_subprocess=True) 
         driver.set_page_load_timeout(30)
         return driver
     except Exception as e:
-        st.error(f"❌ שגיאה בהפעלת Chrome Driver: {e}. ודא ש-packages.txt תקין.")
+        st.error(f"❌ שגיאה בהפעלת Undetected Chrome Driver: {e}.")
         st.stop()
     return None
 
@@ -53,10 +58,10 @@ try:
 except Exception:
     DRIVER = None
     
-# --- 3. פונקציות Scraping ממוקדות עם Debugging ---
+# --- 3. פונקציות Scraping (עם סלקטורים מתוקנים) ---
 
 def search_and_scrape_ksp(query):
-    """מבצע חיפוש ב-KSP, מדפיס HTML לניפוי באגים."""
+    """מבצע חיפוש ב-KSP באמצעות Undetected-Chromedriver."""
     if not DRIVER: return None
 
     search_query = query.replace(' ', '+')
@@ -65,20 +70,18 @@ def search_and_scrape_ksp(query):
     try:
         DRIVER.get(search_url)
         
-        # *** תיקון: הדפסת ה-HTML מיד אחרי הטעינה ***
-        # זה מבטיח שנראה מה הדפדפן קיבל, גם אם זו שגיאה.
-        time.sleep(2) # המתנה קצרה לטעינת JS בסיסי
-        st.subheader("🛠️ KSP DEBUG HTML")
-        st.code(DRIVER.page_source[:8000], language='html') 
-        # *********************************************
-        
-        # ננסה להמתין לאלמנט, אבל גם אם נכשל, כבר הדפסנו את ה-HTML
+        # אם קיבלנו 403, הכותרת תהיה "KSP Forbidden 403"
+        if "403" in DRIVER.title:
+             st.warning(f"❌ KSP עדיין חוסם אותנו (403).")
+             return None
+
         WebDriverWait(DRIVER, 10).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, ".ProductCardPrice, .SearchResults-list"))
         )
         
         soup = BeautifulSoup(DRIVER.page_source, 'html.parser')
         
+        # ⚠️ סלקטור משוער (נשאר זהה בינתיים, הבעיה הייתה החסימה)
         price_tag = soup.select_one('div.ProductCardPrice span.price-label-text') 
         
         if price_tag:
@@ -86,11 +89,11 @@ def search_and_scrape_ksp(query):
             clean_price = re.sub(r'[^\d]', '', price_text) 
             return int(clean_price) if clean_price else None
         
-        st.warning(f"KSP: המחיר לא נמצא עם הסלקטור הנוכחי.")
+        st.warning(f"KSP: המחיר לא נמצא (החסימה הוסרה, אך הסלקטור שגוי).")
         return None 
         
     except TimeoutException:
-        st.warning(f"⏳ KSP: פסק זמן (Timeout) בהמתנה לסלקטור. בדוק את ה-HTML שהודפס.")
+        st.warning(f"⏳ KSP: פסק זמן (Timeout).")
         return None
     except Exception as e:
         st.warning(f"❌ שגיאת Scraping ב-KSP עבור {query}: {e}")
@@ -98,38 +101,35 @@ def search_and_scrape_ksp(query):
 
 
 def search_and_scrape_kolboyehuda(query):
-    """מבצע חיפוש ב-Kol_B_Yehuda, מדפיס HTML לניפוי באגים."""
+    """מבצע חיפוש ב-Kol_B_Yehuda (עם סלקטור מתוקן)."""
     if not DRIVER: return None
     
     search_url = f"https://kolboyehuda.co.il/?s={query.replace(' ', '+')}"
     
     try:
         DRIVER.get(search_url)
-
-        # *** תיקון: הדפסת ה-HTML מיד אחרי הטעינה ***
-        time.sleep(2) # המתנה קצרה לטעינת JS בסיסי
-        st.subheader("🛠️ Kol B'Yehuda DEBUG HTML")
-        st.code(DRIVER.page_source[:8000], language='html') 
-        # *********************************************
-
         WebDriverWait(DRIVER, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ".product-item, .no-products-found"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, ".products, .no-products-found")) # המתנה לרשימת המוצרים
         )
         
         soup = BeautifulSoup(DRIVER.page_source, 'html.parser')
         
-        price_tag = soup.select_one('.product-item .price-wrapper span.amount')
+        # ⚠️ --- תיקון סלקטור (ניחוש מושכל) ---
+        # אתרי WooCommerce משתמשים בדרך כלל ב-CSS class הזה:
+        price_tag = soup.select_one('.product-item .woocommerce-Price-amount.amount bdi')
 
         if price_tag:
             price_text = price_tag.text.strip()
             clean_price = re.sub(r'[^\d]', '', price_text)
+            # המחיר עשוי להיות עם .00, אז ננקה גם את זה
+            clean_price = clean_price.split('00')[0] 
             return int(clean_price) if clean_price else None
             
-        st.warning(f"Kol B'Yehuda: המחיר לא נמצא עם הסלקטור הנוכחי.")
+        st.warning(f"Kol B'Yehuda: המחיר לא נמצא עם הסלקטור המתוקן.")
         return None
         
     except TimeoutException:
-        st.warning(f"⏳ Kol B'Yehuda: פסק זמן (Timeout) בהמתנה לסלקטור. בדוק את ה-HTML שהודפס.")
+        st.warning(f"⏳ Kol B'Yehuda: פסק זמן (Timeout).")
         return None
     except Exception as e:
         st.warning(f"❌ שגיאת Scraping ב-Kol B'Yehuda עבור {query}: {e}")
@@ -154,7 +154,6 @@ def run_price_analysis(product_name, my_price, threshold):
         status_message.text(f"מעבד נתונים מ: {comp_name} עבור {product_name}...")
         
         comp_price = scraper_func(product_name)
-        
         row[f"מחיר {comp_name}"] = comp_price if comp_price else "לא נמצא"
 
         if comp_price:
@@ -168,7 +167,7 @@ def run_price_analysis(product_name, my_price, threshold):
         else:
             row[f"פער {comp_name} (%)"] = "אין נתון"
         
-        time.sleep(1) # אפשר להאיץ קצת
+        time.sleep(1) 
 
     if not is_alert: row["התראה"] = "בטווח"
     results.append(row)
@@ -197,7 +196,7 @@ with st.sidebar:
 if st.button("🔄 הפעל ניתוח מחירים"):
     st.cache_data.clear() 
     
-    with st.spinner('מבצע Web Scraping ואוסף נתונים...'):
+    with st.spinner('מבצע Web Scraping ואוסף נתונים (גרסה משודרגת)...'):
         df_results = run_price_analysis(PRODUCT_NAME, current_price, current_threshold)
         st.success("ניתוח הושלם בהצלחה!")
         st.session_state['df_results'] = df_results
@@ -226,4 +225,4 @@ if 'df_results' in st.session_state:
         st.success("המחיר בטווח התחרותי! אין התראות חדשות.")
 
 st.markdown("---")
-st.caption("כלי זה מציג כעת את קוד ה-HTML שנשלף לצורך ניפוי באגים.")
+st.caption("משתמש כעת ב-Undetected Chromedriver כדי לנסות לעקוף חסימות.")
