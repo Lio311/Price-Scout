@@ -1,4 +1,3 @@
-# Linux packages required for Selenium (Chromium Headless) on Streamlit Cloud
 chromium
 libnss3
 libgconf-2-4
